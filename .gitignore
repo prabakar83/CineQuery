@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Movie files and pipeline outputs (large, personal)
+data/
+
+# OS / editor
+.DS_Store
+.vscode/
