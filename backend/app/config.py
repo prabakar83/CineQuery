@@ -44,6 +44,42 @@ class Settings:
     whisper_compute_type: str = os.environ.get("MOVIEQA_WHISPER_COMPUTE", "auto")  # auto -> float16 on cuda, int8 on cpu
     whisper_beam_size: int = int(os.environ.get("MOVIEQA_WHISPER_BEAM", 5))
     whisper_language: Optional[str] = os.environ.get("MOVIEQA_WHISPER_LANGUAGE") or None  # None = auto-detect
+    whisper_segment_langid: bool = os.environ.get("MOVIEQA_WHISPER_SEGMENT_LANGID", "1") != "0"  # per-line language check
+
+    # Shots stage (PySceneDetect + keyframes)
+    shot_threshold: float = float(os.environ.get("MOVIEQA_SHOT_THRESHOLD", 20.0))     # lower = more cuts (27 missed cuts in dark scenes)
+    min_shot_ms: int = int(os.environ.get("MOVIEQA_MIN_SHOT_MS", 500))                # shorter "shots" are merged
+    keyframe_every_ms: int = int(os.environ.get("MOVIEQA_KEYFRAME_EVERY_MS", 8_000))  # extra frames in long shots
+    max_keyframes_per_shot: int = int(os.environ.get("MOVIEQA_MAX_KEYFRAMES", 6))
+    keyframe_jpeg_quality: int = 3                                                     # ffmpeg -q:v (2 best .. 31 worst)
+
+    # Caption stage
+    caption_engine: str = os.environ.get("MOVIEQA_CAPTION_ENGINE", "florence")      # "florence" (fast, 4 GB GPU) or "ollama"
+    florence_model: str = os.environ.get("MOVIEQA_FLORENCE_MODEL", "florence-community/Florence-2-large")  # or ...-base (faster)
+    florence_device: str = os.environ.get("MOVIEQA_FLORENCE_DEVICE", "auto")         # auto -> cuda if available
+    florence_objects: bool = os.environ.get("MOVIEQA_FLORENCE_OBJECTS", "1") != "0"  # object labels; batched run incl. objects = 1.8 s/frame on RTX 3050
+    florence_caption_beams: int = int(os.environ.get("MOVIEQA_FLORENCE_BEAMS", 1))   # 3 = slightly better, ~20% slower
+    caption_batch_size: int = int(os.environ.get("MOVIEQA_CAPTION_BATCH", 4))        # frames per GPU call (Florence only)
+    # Merge stage (thresholds for marking Whisper lines as unreliable, e.g. made-up languages)
+    dialogue_min_lang_prob: float = float(os.environ.get("MOVIEQA_DIALOGUE_MIN_LANG_PROB", 0.5))   # main signal
+    dialogue_subtitled_min_lang_prob: float = float(os.environ.get("MOVIEQA_DIALOGUE_SUBTITLED_MIN_LANG_PROB", 0.75))  # stricter while subtitles show
+    dialogue_min_logprob: float = float(os.environ.get("MOVIEQA_DIALOGUE_MIN_LOGPROB", -1.2))      # backup signals
+    dialogue_min_word_prob: float = float(os.environ.get("MOVIEQA_DIALOGUE_MIN_WORD_PROB", 0.35))
+    ocr_same_text_ratio: float = 0.8      # neighbouring frames with >= this text similarity = same subtitle
+
+    # Scenes stage (shot grouping + text LLM via Ollama)
+    scene_llm_model: str = os.environ.get("MOVIEQA_SCENE_LLM", "qwen2.5:3b")          # ~2 GB, fits a 4 GB GPU
+    scene_cut_threshold: float = float(os.environ.get("MOVIEQA_SCENE_CUT", 0.5))       # higher = fewer, longer scenes
+    scene_min_ms: int = int(os.environ.get("MOVIEQA_SCENE_MIN_MS", 15_000))
+    scene_max_ms: int = int(os.environ.get("MOVIEQA_SCENE_MAX_MS", 180_000))
+    scene_max_visuals: int = 12              # visual notes sent to the LLM per scene
+    scene_llm_ctx: int = 4096                # context window (tokens)
+
+    # (ollama engine) vision model served by Ollama
+    ollama_url: str = os.environ.get("MOVIEQA_OLLAMA_URL", "http://localhost:11434")
+    vision_model: str = os.environ.get("MOVIEQA_VISION_MODEL", "qwen2.5vl:3b")        # 3b fits a 4 GB GPU
+    vision_timeout_s: int = int(os.environ.get("MOVIEQA_VISION_TIMEOUT_S", 180))      # first call also loads the model
+    vision_retries: int = int(os.environ.get("MOVIEQA_VISION_RETRIES", 2))            # per frame, on bad JSON / timeouts
 
     @property
     def videos_dir(self) -> Path:

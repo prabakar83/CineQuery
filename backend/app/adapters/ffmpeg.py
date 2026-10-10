@@ -151,6 +151,12 @@ def extract_audio(src: Path, dst: Path, *, sample_rate: int,
     ]
     _run_to_file(args, dst, duration_ms, on_progress)
 
+def extract_frame(src: Path, ts_ms: int, dst: Path, *, quality: int = 3) -> None:
+    """Save the single frame at ts_ms as a JPG (input seeking: fast, frame-accurate in ffmpeg >= 2.1)."""
+    args = ["-ss", f"{ts_ms / 1000:.3f}", "-i", str(src), "-frames:v", "1", "-q:v", str(quality), "-an", "-sn"]
+    _run_to_file(args, dst, duration_ms=0, on_progress=None)
+
+
 def extract_subtitles(src: Path, dst: Path, stream_index: int) -> None:
     args = ["-i", str(src), "-map", f"0:{stream_index}", "-c:s", "srt"]
     _run_to_file(args, dst, duration_ms=0, on_progress=None)

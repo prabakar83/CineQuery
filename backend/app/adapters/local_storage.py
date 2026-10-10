@@ -9,6 +9,11 @@ This is the ONLY place that knows the on-disk layout:
         subtitles.srt      only if text subtitles    (stage 1)
         chunks.json        time ranges per chunk     (stage 2)
         transcripts/       c000.json, c001.json ...  (stage 3)
+        shots/             c000.json, c001.json ...  (stage 4)
+        frames/            000304075.jpg ...         (stage 4 keyframes, named by ms)
+        captions/          c000.json, c001.json ...  (stage 5)
+        timeline.json      dialogue + on-screen text + visuals per shot (stage 6)
+        scenes.json        scenes: description, characters, mood, tags (stage 7)
         metadata.json      media info + stage status
 
 Stages ask these functions for paths instead of building them by hand,
@@ -64,6 +69,36 @@ class VideoPaths:
     def transcript(self, chunk_id: str) -> Path:
         """transcripts/c000.json — the transcript of one chunk (stage 3)."""
         return self.transcripts_dir / f"{chunk_id}.json"
+
+    @property
+    def shots_dir(self) -> Path:
+        return self.root / "shots"
+
+    def shots(self, chunk_id: str) -> Path:
+        """shots/c000.json — the shot list of one chunk (stage 4)."""
+        return self.shots_dir / f"{chunk_id}.json"
+
+    @property
+    def captions_dir(self) -> Path:
+        return self.root / "captions"
+
+    def captions(self, chunk_id: str) -> Path:
+        """captions/c000.json — keyframe descriptions of one chunk (stage 5)."""
+        return self.captions_dir / f"{chunk_id}.json"
+
+    @property
+    def timeline(self) -> Path:
+        """timeline.json — everything merged on one movie clock (stage 6)."""
+        return self.root / "timeline.json"
+
+    @property
+    def scenes(self) -> Path:
+        """scenes.json — scenes with LLM descriptions and tags (stage 7)."""
+        return self.root / "scenes.json"
+
+    def frame(self, ts_ms: int) -> Path:
+        """frames/000304075.jpg — keyframe at that movie time (stage 4). Zero-padded so files sort by time."""
+        return self.frames_dir / f"{ts_ms:09d}.jpg"
 
     @property
     def frames_dir(self) -> Path:

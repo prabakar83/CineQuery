@@ -67,7 +67,8 @@ def run(video_id: str, *, force: bool = False, progress: ProgressCallback = no_p
             from app.adapters.whisper_asr import WhisperASR
             progress(NAME, 0.0, f"loading whisper {settings.whisper_model}")
             asr = WhisperASR(settings.whisper_model, settings.whisper_device,
-                             settings.whisper_compute_type, settings.whisper_beam_size)
+                             settings.whisper_compute_type, settings.whisper_beam_size,
+                             segment_langid=settings.whisper_segment_langid)
 
             language: Optional[str] = settings.whisper_language or meta.get("language")
             for n, chunk in enumerate(todo):

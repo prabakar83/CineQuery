@@ -1,4 +1,13 @@
 # Python 3.11 recommended (AI libraries lag behind the newest Python).
-# Setup:  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-faster-whisper>=1.1,<2
+# Setup (Windows, NVIDIA GPU):
+#   py -3.11 -m venv .venv ; .venv\Scripts\Activate.ps1
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128   # CUDA build FIRST (plain pip gives CPU-only)
+#   pip install -r requirements.txt
+#   pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"              # GPU libraries for faster-whisper
+faster-whisper>=1.1,<2          # stage 3: speech-to-text
 numpy>=1.24
+scenedetect>=0.6.4              # stage 4: camera-cut detection
+opencv-python-headless>=4.8     # video decoding for scenedetect (no GUI needed)
+torch>=2.4                      # stage 5: Florence-2 (install the CUDA build first, see above)
+transformers>=5.0               # stage 5: native Florence-2 support
+pillow>=10                      # image loading
