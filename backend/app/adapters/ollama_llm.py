@@ -11,7 +11,7 @@ import logging
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from app.adapters.ollama_vision import OllamaError, OllamaUnreachable
 
@@ -37,21 +37,27 @@ class OllamaLLM:
             raise OllamaError(f"Model '{self.model}' is not downloaded. Run: ollama pull {self.model}")
 
     def generate_json(self, system: str, prompt: str, schema: dict[str, Any],
-                      temperature: float = 0.2) -> dict[str, Any]:
-        """Ask the model for JSON matching `schema` (Ollama structured outputs)."""
+                      temperature: float = 0.2, max_tokens: Optional[int] = None) -> dict[str, Any]:
+        """Ask the model for JSON matching `schema` (Ollama structured outputs).
+
+        max_tokens caps the reply length (Ollama's num_predict). Without a cap a small model can
+        get stuck repeating text inside a JSON string until the request times out.
+        """
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "format": schema,
             "stream": False,
-            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx,
+                        **({"num_predict": max_tokens} if max_tokens else {})},
             "keep_alive": "5m",
         }
         last: Optional[Exception] = None
         for attempt in range(1, self.retries + 2):
             try:
                 reply = self._request("POST", "/api/chat", payload, timeout=self.timeout_s)
-                return json.loads(reply.get("message", {}).get("content", ""))
+                # strict=False: accept raw newlines inside strings (models often write lists that way)
+                return json.loads(reply.get("message", {}).get("content", ""), strict=False)
             except OllamaUnreachable:
                 raise
             except (json.JSONDecodeError, OllamaError) as exc:
@@ -59,6 +65,50 @@ class OllamaLLM:
                 log.warning("LLM attempt %d failed (%s)", attempt, exc)
                 time.sleep(1)
         raise OllamaError(f"LLM failed after {self.retries + 1} attempts: {last}")
+
+    def generate_json_stream(self, system: str, prompt: str, schema: dict[str, Any],
+                             on_text: Callable[[str], None], temperature: float = 0.2,
+                             max_tokens: Optional[int] = None) -> dict[str, Any]:
+        """Like generate_json, but streams: on_text(piece) is called for every piece of raw JSON text
+        as the model writes it (used to show the answer word by word). One attempt, no retries."""
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            "format": schema,
+            "stream": True,
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx,
+                        **({"num_predict": max_tokens} if max_tokens else {})},
+            "keep_alive": "5m",
+        }
+        req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(payload).encode("utf-8"),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        parts: list[str] = []
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                for raw in resp:                                  # one JSON object per line
+                    if not raw.strip():
+                        continue
+                    chunk = json.loads(raw.decode("utf-8"))
+                    if chunk.get("error"):
+                        raise OllamaError(f"Ollama error: {chunk['error']}")
+                    piece = chunk.get("message", {}).get("content", "")
+                    if piece:
+                        parts.append(piece)
+                        on_text(piece)
+                    if chunk.get("done"):
+                        break
+        except urllib.error.HTTPError as exc:
+            raise OllamaError(f"HTTP {exc.code} from Ollama: {exc.read().decode('utf-8', 'replace')[:500]}") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise OllamaError(f"timed out after {self.timeout_s}s") from exc
+            raise OllamaUnreachable(str(exc.reason)) from exc
+        except TimeoutError as exc:
+            raise OllamaError(f"timed out after {self.timeout_s}s (model too slow or stuck)") from exc
+        try:
+            return json.loads("".join(parts), strict=False)
+        except json.JSONDecodeError as exc:
+            raise OllamaError(f"bad JSON from model: {exc}") from exc
 
     def unload(self) -> None:
         try:
@@ -79,3 +129,5 @@ class OllamaLLM:
             if isinstance(exc.reason, TimeoutError):
                 raise OllamaError(f"timed out after {timeout}s") from exc
             raise OllamaUnreachable(str(exc.reason)) from exc
+        except TimeoutError as exc:                          # read timeout while the model is generating
+            raise OllamaError(f"timed out after {timeout}s (model too slow or stuck)") from exc

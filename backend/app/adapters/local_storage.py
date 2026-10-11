@@ -14,6 +14,8 @@ This is the ONLY place that knows the on-disk layout:
         captions/          c000.json, c001.json ...  (stage 5)
         timeline.json      dialogue + on-screen text + visuals per shot (stage 6)
         scenes.json        scenes: description, characters, mood, tags (stage 7)
+        embeddings/        index.json + vectors.npy for semantic search (stage 8)
+        summaries.json     chapter summaries + movie profile (stage 9)
         metadata.json      media info + stage status
 
 Stages ask these functions for paths instead of building them by hand,
@@ -25,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -96,6 +99,25 @@ class VideoPaths:
         """scenes.json — scenes with LLM descriptions and tags (stage 7)."""
         return self.root / "scenes.json"
 
+    @property
+    def embeddings_dir(self) -> Path:
+        return self.root / "embeddings"
+
+    @property
+    def embeddings_index(self) -> Path:
+        """embeddings/index.json — one entry per searchable item (stage 8)."""
+        return self.embeddings_dir / "index.json"
+
+    @property
+    def embeddings_vectors(self) -> Path:
+        """embeddings/vectors.npy — row i is the vector of index.json items[i] (stage 8)."""
+        return self.embeddings_dir / "vectors.npy"
+
+    @property
+    def summaries(self) -> Path:
+        """summaries.json — chapters + movie profile: genre, plot, characters (stage 9)."""
+        return self.root / "summaries.json"
+
     def frame(self, ts_ms: int) -> Path:
         """frames/000304075.jpg — keyframe at that movie time (stage 4). Zero-padded so files sort by time."""
         return self.frames_dir / f"{ts_ms:09d}.jpg"
@@ -161,9 +183,18 @@ def import_original(src: Path, video_id: str) -> Path:
 
 # ---------------------------------------------------------------- json helpers
 def read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Retries: on Windows a file can be briefly locked while another thread replaces it
+    # (the API reads metadata.json while the worker writes it).
+    for attempt in range(5):
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (PermissionError, json.JSONDecodeError):
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    return {}
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
@@ -171,7 +202,14 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.stem}.tmp{path.suffix}")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:                # target briefly open by a reader (Windows)
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 # ---------------------------------------------------------------- metadata.json

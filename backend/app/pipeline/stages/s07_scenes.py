@@ -13,7 +13,7 @@ Part 1 — segmentation (code, no AI). Between every two neighbouring shots we s
 Cuts are made where the score passes config.scene_cut_threshold, respecting a minimum
 and maximum scene length. Title cards / credits (graphic frames) become their own scenes.
 
-Part 2 — description (LLM via Ollama, default qwen2.5:3b). Each scene's dialogue,
+Part 2 — description (LLM via Ollama, default qwen2.5:7b). Each scene's dialogue,
 on-screen text and visual notes go to the model, which returns structured JSON:
 title, description, characters, location, time of day, mood, events, tag confidences.
 Foreign/unreliable speech is replaced by "[speech in another language]"; visual notes
@@ -71,7 +71,8 @@ SCENE_SCHEMA: dict[str, Any] = {
     "required": ["title", "description", "characters", "location", "time_of_day", "mood", "events", "tags"],
 }
 
-TAG_GUIDE = "\n".join(f"  - {t}: {d}" for t, d in {
+# One-line definition per tag: used in the LLM prompt (here) and for tag search in stage 8.
+TAG_DEFINITIONS: dict[str, str] = {
     "dialogue": "people talk to each other for most of the scene",
     "speech_to_crowd": "one person addresses a group or crowd",
     "suspense": "tension, threat or something about to happen",
@@ -92,7 +93,8 @@ TAG_GUIDE = "\n".join(f"  - {t}: {d}" for t, d in {
     "death": "a character dies or a body is shown",
     "betrayal": "someone is betrayed or accused of betrayal",
     "reunion": "people meet again after a separation",
-}.items())
+}
+TAG_GUIDE = "\n".join(f"  - {t}: {d}" for t, d in TAG_DEFINITIONS.items())
 
 SYSTEM_PROMPT = f"""You describe one scene of a movie from automatically extracted notes.
 How to use the notes:

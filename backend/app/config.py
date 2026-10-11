@@ -68,18 +68,44 @@ class Settings:
     ocr_same_text_ratio: float = 0.8      # neighbouring frames with >= this text similarity = same subtitle
 
     # Scenes stage (shot grouping + text LLM via Ollama)
-    scene_llm_model: str = os.environ.get("MOVIEQA_SCENE_LLM", "qwen2.5:3b")          # ~2 GB, fits a 4 GB GPU
+    scene_llm_model: str = os.environ.get("MOVIEQA_SCENE_LLM", "qwen2.5:7b")          # 7b: far better tags (~75 s/scene on 4 GB GPU); qwen2.5:3b = faster, over-tags
     scene_cut_threshold: float = float(os.environ.get("MOVIEQA_SCENE_CUT", 0.5))       # higher = fewer, longer scenes
     scene_min_ms: int = int(os.environ.get("MOVIEQA_SCENE_MIN_MS", 15_000))
     scene_max_ms: int = int(os.environ.get("MOVIEQA_SCENE_MAX_MS", 180_000))
     scene_max_visuals: int = 12              # visual notes sent to the LLM per scene
     scene_llm_ctx: int = 4096                # context window (tokens)
 
+    # Embed stage (semantic search)
+    embed_model: str = os.environ.get("MOVIEQA_EMBED_MODEL", "nomic-embed-text")      # ~270 MB, 768-dim vectors
+    embed_batch_size: int = int(os.environ.get("MOVIEQA_EMBED_BATCH", 32))            # texts per Ollama call
+    tag_llm_weight: float = 0.6              # tag score = 0.6 * LLM confidence + 0.4 * similarity rank in this movie
+
+    # Summarize stage (chapters + movie profile, text LLM via Ollama)
+    summary_llm_model: str = os.environ.get("MOVIEQA_SUMMARY_LLM", os.environ.get("MOVIEQA_SCENE_LLM", "qwen2.5:7b"))
+    chapter_target_ms: int = int(os.environ.get("MOVIEQA_CHAPTER_MS", 10 * 60 * 1000))  # ~10 min per chapter
+    summary_llm_ctx: int = int(os.environ.get("MOVIEQA_SUMMARY_CTX", 8192))           # bigger prompts than scenes
+    summary_timeout_s: int = int(os.environ.get("MOVIEQA_SUMMARY_TIMEOUT_S", 600))    # 7b partly on CPU is slow
+    chapter_max_quotes: int = 40             # dialogue / subtitle lines quoted per chapter
+
+    # Ask (question-answering agent)
+    ask_llm_model: str = os.environ.get("MOVIEQA_ASK_LLM", os.environ.get("MOVIEQA_SCENE_LLM", "qwen2.5:7b"))
+    ask_max_steps: int = int(os.environ.get("MOVIEQA_ASK_MAX_STEPS", 3))       # tool calls before it must answer
+    ask_llm_ctx: int = int(os.environ.get("MOVIEQA_ASK_CTX", 4096))           # 8192 spills more of 7b to CPU on 4 GB
+    ask_timeout_s: int = int(os.environ.get("MOVIEQA_ASK_TIMEOUT_S", 300))
+    ask_observation_chars: int = 2000        # max text per tool result shown to the LLM
+    ask_answer_tokens: int = 500             # reply cap per LLM call (a step may contain the answer)
+
     # (ollama engine) vision model served by Ollama
     ollama_url: str = os.environ.get("MOVIEQA_OLLAMA_URL", "http://localhost:11434")
     vision_model: str = os.environ.get("MOVIEQA_VISION_MODEL", "qwen2.5vl:3b")        # 3b fits a 4 GB GPU
     vision_timeout_s: int = int(os.environ.get("MOVIEQA_VISION_TIMEOUT_S", 180))      # first call also loads the model
     vision_retries: int = int(os.environ.get("MOVIEQA_VISION_RETRIES", 2))            # per frame, on bad JSON / timeouts
+
+    # API
+    cors_origins: tuple[str, ...] = tuple(o.strip() for o in os.environ.get(
+        "MOVIEQA_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip())
+    upload_extensions: tuple[str, ...] = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
+    max_upload_gb: float = float(os.environ.get("MOVIEQA_MAX_UPLOAD_GB", 20))
 
     @property
     def videos_dir(self) -> Path:

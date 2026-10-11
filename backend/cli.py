@@ -16,9 +16,16 @@ Run from the backend/ folder:
     python3 cli.py captions vid_8f3a2c [--full]     # print the frame descriptions
     python3 cli.py merge vid_8f3a2c [--force]       # build timeline.json (no AI, ~1 s)
     python3 cli.py timeline vid_8f3a2c [--from 1:40 --to 2:00]   # print the merged timeline
-    python3 cli.py scenes vid_8f3a2c [--force]      # group shots into scenes + LLM descriptions (needs Ollama + qwen2.5:3b)
+    python3 cli.py scenes vid_8f3a2c [--force]      # group shots into scenes + LLM descriptions (needs Ollama + qwen2.5:7b)
     python3 cli.py scene-list vid_8f3a2c            # one line per scene with top tags
     python3 cli.py scene vid_8f3a2c 3               # everything about scene 3
+    python3 cli.py embed vid_8f3a2c [--force]       # build the search index (needs Ollama + nomic-embed-text)
+    python3 cli.py search vid_8f3a2c "someone warns the crowd" [--top 10] [--kind scene]
+    python3 cli.py tag vid_8f3a2c religious_ritual [--min 0.5]   # scenes for a tag, best first
+    python3 cli.py summarize vid_8f3a2c [--force]   # chapter summaries + movie profile (needs Ollama + qwen2.5:7b)
+    python3 cli.py chapters vid_8f3a2c              # print the chapter summaries
+    python3 cli.py profile vid_8f3a2c               # genre, plot, characters, themes, ending
+    python3 cli.py ask vid_8f3a2c "What happens between 1:00 and 2:00?" [--show-tools]   # ask anything
 """
 from __future__ import annotations
 
@@ -31,11 +38,9 @@ from pathlib import Path
 from app.adapters import local_storage as storage
 from app.adapters.ffmpeg import FFmpegError
 from app.pipeline.base import StageError
-from app.pipeline.stages import s01_normalize, s02_chunk, s03_transcribe, s04_shots, s05_caption, s06_merge, s07_scenes
-
-# Stages run in this order. New stages get appended here.
-PIPELINE = [s01_normalize, s02_chunk, s03_transcribe, s04_shots, s05_caption, s06_merge, s07_scenes]
-STAGES_BY_NAME = {stage.NAME: stage for stage in PIPELINE}
+from app.pipeline.runner import PIPELINE, STAGES_BY_NAME
+from app.pipeline.runner import run_pipeline as _run_pipeline
+from app.pipeline.stages import s03_transcribe, s04_shots, s05_caption, s06_merge, s07_scenes
 
 
 # ---------------------------------------------------------------- progress bar
@@ -70,9 +75,7 @@ def _require_video(video_id: str) -> None:
 
 
 def run_pipeline(video_id: str, force: bool = False) -> None:
-    progress = ConsoleProgress()
-    for stage in PIPELINE:
-        stage.run(video_id, force=force, progress=progress)
+    _run_pipeline(video_id, force=force, progress=ConsoleProgress())
 
 
 # ---------------------------------------------------------------- commands
@@ -274,6 +277,93 @@ def cmd_scene(args: argparse.Namespace) -> None:
             print(f"  TEXT [{_fmt(by_id[i]['start_ms'])}] {by_id[i]['text']}")
 
 
+def cmd_search(args: argparse.Namespace) -> None:
+    _require_video(args.video_id)
+    from app.query.tools.search import search_moments
+    results = search_moments(args.video_id, args.query, top_k=args.top, kinds=[args.kind] if args.kind else None)
+    if not results:
+        print("No matches.")
+        return
+    for r in results:
+        when = f"{_fmt(r['start_ms'])}-{_fmt(r['end_ms'])}" if r["kind"] == "scene" else _fmt(r["start_ms"])
+        scene = f"#{r['scene']}" if r.get("scene") is not None else "-"
+        text = r["text"] if r["kind"] == "scene" else f'"{r["text"]}"'
+        print(f"{r['score']:.3f}  {r['kind']:<8} {scene:>4}  {when:<17}  {text[:110]}")
+
+
+def cmd_tag(args: argparse.Namespace) -> None:
+    _require_video(args.video_id)
+    from app.query.tools.tags import find_scenes_by_tag
+    rows = find_scenes_by_tag(args.video_id, args.tag, args.min)
+    if not rows:
+        print(f"No scenes with {args.tag} >= {args.min}")
+        return
+    for r in rows:
+        print(f"{r['score']:.2f} (llm {r['llm_confidence']:.1f})  #{r['scene']:<3} "
+              f"{_fmt(r['start_ms'])}-{_fmt(r['end_ms'])}  {r['title']:<28.28}  {r['evidence'][:70]}")
+
+
+def cmd_chapters(args: argparse.Namespace) -> None:
+    _require_video(args.video_id)
+    from app.query.tools.summary import get_chapter_summaries
+    for c in get_chapter_summaries(args.video_id):
+        print(f"\n=== Chapter {c['chapter']}: {c.get('title', '')}   {_fmt(c['start_ms'])} - {_fmt(c['end_ms'])}  "
+              f"(scenes {c['scenes'][0]}-{c['scenes'][1]})")
+        if "error" in c:
+            print("ERROR:", c["error"])
+            continue
+        print(c["summary"])
+        for e in c["events"]:
+            print("  -", e)
+        print("Characters:", "; ".join(c["characters"]) or "-", "| Places:", "; ".join(c["locations"]) or "-",
+              "| Mood:", c["mood"] or "-")
+
+
+def cmd_profile(args: argparse.Namespace) -> None:
+    _require_video(args.video_id)
+    from app.query.tools.summary import get_movie_summary
+    p = get_movie_summary(args.video_id)
+    if "error" in p:
+        print("ERROR:", p["error"])
+        return
+    print(f"Type     : {p['video_type']}")
+    print("Genres   : " + (", ".join(f"{g['genre']} {g['confidence']:.1f}" for g in p["genres"]) or "-"))
+    for g in p["genres"]:
+        print(f"    {g['genre']}: {g['evidence']}")
+    print(f"Logline  : {p['logline']}")
+    print(f"Setting  : {p['setting']}   Tone: {p['tone']}")
+    print(f"Themes   : {', '.join(p['themes']) or '-'}")
+    print(f"\nPlot:\n{p['plot']}\n\nEnding:\n{p['ending']}\n\nCharacters:")
+    for c in p["characters"]:
+        print(f"  - {c['name']} ({c['role']}): {c['description']}")
+    stats = ", ".join(f"{t} {int(v * 100)}%" for t, v in p.get("tag_stats", {}).items())
+    print(f"\nTag stats: {stats or '-'}")
+
+
+def cmd_ask(args: argparse.Namespace) -> None:
+    _require_video(args.video_id)
+    from app.query.agent import ask
+
+    def on_step(step: dict) -> None:
+        call = step["call"]
+        shown = ", ".join(f"{k}={_fmt(v) if k.endswith('_ms') else v}" for k, v in call.items() if k != "action")
+        print(f"  [{step['source']}] {call['action']}({shown})  {step['seconds']}s")
+        if args.show_tools:
+            for line in step["observation"].splitlines():
+                print(f"      {line}")
+
+    print(f"Q: {args.question}\n")
+    result = ask(args.video_id, args.question, on_step=on_step)
+    print(f"\nA: {result['answer']}")
+    if result.get("sources"):
+        print("\nSources:")
+        for src in result["sources"]:
+            print(f"  [{_fmt(src['start_ms'])}-{_fmt(src['end_ms'])}] {src['label']}")
+    if result["unverified_times"]:
+        print(f"\n(warning: these cited times were not found in the tool results: {', '.join(result['unverified_times'])})")
+    print(f"\n[{result['model']}, {len(result['steps'])} tool call(s), {result['seconds']}s]")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cli.py", description="Movie QA backend CLI")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
@@ -318,6 +408,33 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("video_id")
     p.add_argument("number", type=int)
     p.set_defaults(func=cmd_scene)
+
+    p = sub.add_parser("search", help="search the movie by meaning")
+    p.add_argument("video_id")
+    p.add_argument("query")
+    p.add_argument("--top", type=int, default=10, help="number of results")
+    p.add_argument("--kind", choices=["scene", "dialogue", "text"], help="only this kind of item")
+    p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("tag", help="scenes for one tag, best first")
+    p.add_argument("video_id")
+    p.add_argument("tag")
+    p.add_argument("--min", type=float, default=0.5, help="minimum score 0..1")
+    p.set_defaults(func=cmd_tag)
+
+    p = sub.add_parser("chapters", help="print the chapter summaries")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_chapters)
+
+    p = sub.add_parser("profile", help="print the movie profile (genre, plot, characters)")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_profile)
+
+    p = sub.add_parser("ask", help="ask any question about the video")
+    p.add_argument("video_id")
+    p.add_argument("question")
+    p.add_argument("--show-tools", action="store_true", help="print what each tool returned")
+    p.set_defaults(func=cmd_ask)
 
     p = sub.add_parser("timeline", help="print the merged timeline")
     p.add_argument("video_id")

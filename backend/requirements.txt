@@ -11,3 +11,5 @@ opencv-python-headless>=4.8     # video decoding for scenedetect (no GUI needed)
 torch>=2.4                      # stage 5: Florence-2 (install the CUDA build first, see above)
 transformers>=5.0               # stage 5: native Florence-2 support
 pillow>=10                      # image loading
+fastapi>=0.115                  # HTTP API (app/main.py)
+uvicorn[standard]>=0.30         # API server: uvicorn app.main:app --port 8000
